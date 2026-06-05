@@ -1,0 +1,1 @@
+"use strict";(self.webpackChunktrl_architecture_lectures=self.webpackChunktrl_architecture_lectures||[]).push([["985"],{3872(e,r,c){c.d(r,{createRadarServices:()=>t.f});var t=c(5160);c(9302)}}]);

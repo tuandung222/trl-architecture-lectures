@@ -1,0 +1,1 @@
+"use strict";(self.webpackChunktrl_architecture_lectures=self.webpackChunktrl_architecture_lectures||[]).push([["6079"],{6402(e,r,c){c.d(r,{createArchitectureServices:()=>t.S});var t=c(5016);c(9302)}}]);
