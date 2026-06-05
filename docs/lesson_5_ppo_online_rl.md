@@ -190,4 +190,11 @@ $$L_{BCO} = -\mathbb{E}[\log \sigma(f(x, y))] \text{ for good} - \mathbb{E}[\log
 
 Nash equilibrium-based training cho multi-player preference games.
 
+---
+
+## Xem thêm
+
+- [Lý thuyết 1: PPO Mathematics](./theory_deep_dive/theory_1_ppo_math.md): GAE derivation và clipped surrogate objective
+- [Experiment: GRPO vs DPO](./experiments_deep_dive/exp_1_grpo_vs_dpo.md): So sánh online RL (GRPO) và offline (DPO)
+
 Bài tiếp theo phân tích hệ thống reward engineering trong TRL.

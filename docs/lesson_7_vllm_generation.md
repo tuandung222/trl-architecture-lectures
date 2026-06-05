@@ -244,4 +244,10 @@ graph TD
 
 Mỗi environment instance chạy độc lập, cho phép parallel tool execution.
 
+---
+
+## Xem thêm
+
+- [Experiment: vLLM Speedup](./experiments_deep_dive/exp_3_vllm_speedup.md): Benchmark chi tiết vLLM vs HF generate
+
 Bài tiếp theo thực hành xây dựng toy alignment pipeline từ đầu.

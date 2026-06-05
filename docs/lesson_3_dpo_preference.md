@@ -178,4 +178,11 @@ Khi `use_logits_to_keep=True`, chỉ compute logits cho K tokens cuối thay vì
 # Giảm VRAM: T/K lần cho logits tensor
 ```
 
+---
+
+## Xem thêm
+
+- [Lý thuyết 3: DPO Mathematics](./theory_deep_dive/theory_3_dpo_math.md): Derivation đầy đủ của DPO loss từ RL objective
+- [Experiment: GRPO vs DPO](./experiments_deep_dive/exp_1_grpo_vs_dpo.md): Benchmark so sánh DPO và GRPO trên cùng setup
+
 Bài tiếp theo đi sâu vào GRPO, trainer phức tạp và mạnh nhất trong TRL.

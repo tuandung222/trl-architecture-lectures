@@ -309,4 +309,14 @@ def get_off_policy_mask(advantages, per_token_logps, sampling_logps, mask, thres
     return keep.float().unsqueeze(1)
 ```
 
+---
+
+## Xem thêm
+
+- [Lý thuyết 2: GRPO Mathematics](./theory_deep_dive/theory_2_grpo_math.md): Derivation group-relative advantage và clipped surrogate
+- [Lý thuyết 5: Loss Variants](./theory_deep_dive/theory_5_loss_variants.md): Phân tích 8 loss types trong GRPOTrainer
+- [Case Study: DeepSeek-R1 GRPO](./case_studies/case_1_deepseek_r1_grpo.md): Phân tích cách DeepSeek-R1 dùng GRPO
+- [Experiment: Loss Variants Benchmark](./experiments_deep_dive/exp_2_loss_variants_benchmark.md): Benchmark 8 loss types trên GSM8K
+- [Bài 4b: RLOO Trainer](./lesson_4b_rloo_trainer.md): Alternative advantage estimator với leave-one-out baseline
+
 Bài tiếp theo phân tích PPO và các trainer trong experimental/.

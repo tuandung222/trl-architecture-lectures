@@ -65,3 +65,62 @@ GRPO sử dụng sequence-level KL trong loss:
 ```python
 loss = per_token_loss + self.beta * per_token_kl  # broadcast [B,1] to [B,T]
 ```
+
+---
+
+## 6. So sánh số 4 phương pháp
+
+Bảng dưới đây minh họa giá trị KL divergence khi $r = \frac{\pi_{ref}(t)}{\pi_\theta(t)}$ thay đổi:
+
+| Ratio $r$ | Exact KL | Schulman ($e^x - x - 1$) | Forward KL | Reverse KL |
+|:---|:---|:---|:---|:---|
+| 0.5 | 0.193 | 0.148 | 0.193 | 0.307 |
+| 0.8 | 0.023 | 0.020 | 0.023 | 0.028 |
+| 1.0 | 0.000 | 0.000 | 0.000 | 0.000 |
+| 1.2 | 0.018 | 0.017 | 0.018 | 0.022 |
+| 2.0 | 0.307 | 0.307 | 0.307 | 0.193 |
+| 5.0 | 3.390 | 144.5 | 3.390 | 0.214 |
+
+Nhận xét:
+- **Schulman** gần đúng khi $r \approx 1$ (policy gần reference) nhưng **overestimate** khi $r$ lớn (policy drift xa)
+- **Forward vs Reverse KL**: symmetric tại $r=1$, asymmetric tại $r$ lớn
+- **Schulman overestimate** tại $r=5$ vì $e^x$ tăng exponential: đây là tính chất, không phải lỗi, nó phạt mạnh khi policy drift xa
+
+---
+
+## 7. KL trong từng Trainer
+
+| Trainer | KL Method | Cách sử dụng | Code ref |
+|:---|:---|:---|:---|
+| GRPOTrainer | Schulman approx | Cộng vào loss (per-token) | `grpo_trainer.py` |
+| RLOOTrainer | Exact (log ratio) | Trừ vào reward (per-sequence) | `rloo_trainer.py` |
+| PPOTrainer | Token-level KL | Trừ vào reward (per-token) | `ppo_trainer.py` |
+| DPOTrainer | Implicit | Không tính KL trực tiếp | `dpo_trainer.py` |
+
+**Tại sao DPO không cần KL**: DPO đã implicit regularize KL qua công thức loss. Tham số $\beta$ trong DPO chính là KL penalty coefficient, nhưng không cần tính KL divergence vì nó được embedded trong log-ratio.
+
+---
+
+## 8. Practical Implications cho Beta Tuning
+
+### 8.1. Khi nào beta = 0 an toàn?
+
+- Khi training ngắn (vài trăm steps) và policy không drift xa reference
+- Khi dùng LoRA với rank nhỏ (limited capacity = limited drift)
+- Khi dataset lớn và model nhỏ (model không thể overfit)
+
+### 8.2. Khi nào bias correction quan trọng?
+
+- Khi dùng vLLM (logprobs khác nhau giữa generation và training)
+- Khi `num_iterations > 1` (nhiều update steps trên cùng generation batch)
+- Khi learning rate cao (policy drift nhanh)
+
+### 8.3. Schulman vs Exact KL: Trade-off
+
+| Factor | Schulman | Exact |
+|:---|:---|:---|
+| Speed | O(1) per token | O(1) per token |
+| Accuracy | Approximate | Exact (single token) |
+| Overestimation | Có khi $r$ lớn | Không |
+| Default trong TRL | Có | Không |
+| Recommendation | Production training | Research experiments |

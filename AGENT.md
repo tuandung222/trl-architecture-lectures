@@ -106,15 +106,20 @@ A reader should finish this curriculum able to explain:
 - The mathematical derivation of DPO from RL objective and why partition function cancels.
 - How GRPO eliminates the Critic model using group-relative advantages.
 - The exact implementation of 8 loss variants in GRPOTrainer and their tradeoffs.
+- How RLOO uses leave-one-out baseline estimation and why it differs from GRPO group mean.
 - How vLLM integration works with importance sampling correction.
 - The mechanics of multi-turn tool-calling with environment factory pattern.
 - How to design effective reward functions for different alignment tasks.
-- The complete alignment pipeline: SFT to DPO/GRPO in TRL.
+- How to train a reward model with RewardTrainer and Bradley-Terry loss.
+- The role of TRL callbacks: SyncRefModelCallback (EMA), LogCompletionsCallback, BEMACallback.
+- The complete alignment pipeline: SFT to DPO/GRPO/RLOO in TRL.
 
 ### Misconceptions to actively prevent
 - DPO does not eliminate RL concepts; it implicitly defines reward via log probability ratio.
 - GRPO group mean is not a "zero baseline"; it is a dynamic baseline that adapts per prompt.
+- RLOO leave-one-out baseline is not the same as GRPO group mean; it has lower variance but different bias properties.
 - When using PEFT/LoRA, reference model is not needed because disabling adapter reverts to base model.
 - vLLM logprobs differ from HF Transformers logprobs; importance sampling correction is essential.
 - In multi-turn RL, tool response tokens must be masked in loss computation.
 - `beta=0` in GRPO means no KL penalty and no reference model needed, but risks policy collapse.
+- RLOO uses sequence-level loss (not token-level like GRPO), which loses per-token dynamics information.

@@ -198,4 +198,137 @@ trainer = GRPOTrainer(
 5. **Multi-objective balance**: Scale các reward component về cùng magnitude (thường [0, 1])
 6. **Async for external tools**: Dùng async reward cho code execution, API calls
 
+---
+
+## 9. RewardTrainer: Train Reward Model từ Preference Data
+
+Trước khi dùng reward model trong GRPO/PPO, ai đó phải train nó. `RewardTrainer` (712 dòng, `reward_trainer.py`) đảm nhận việc này.
+
+### 9.1. Bradley-Terry Loss
+
+Reward model học cách phân biệt "chosen" (tốt) và "rejected" (xấu):
+
+$$L = -\log\sigma(R(x, y_w) - R(x, y_l) - m)$$
+
+với $m$ là margin optional.
+
+```python
+# reward_trainer.py, lines 645-659
+rewards_chosen, rewards_rejected = torch.chunk(outputs.logits.squeeze(-1), chunks=2)
+
+if "margin" in inputs:
+    loss = -logsigmoid(rewards_chosen - rewards_rejected - inputs["margin"]).mean()
+else:
+    loss = -logsigmoid(rewards_chosen - rewards_rejected).mean()
+
+# Center rewards regularization (optional)
+if self.args.center_rewards_coefficient is not None:
+    loss += coeff * torch.mean((rewards_chosen + rewards_rejected) ** 2)
+```
+
+`center_rewards_coefficient` điều chỉnh reward về 0 mean, tránh reward drift.
+
+### 9.2. Data Format và Evaluation
+
+Dataset cần các cột: `chosen_ids`, `rejected_ids`, `attention_mask`, và optional `margin`.
+
+**Evaluation metrics**:
+- **Accuracy**: tỉ lệ `chosen > rejected`
+- **Margin**: `mean(R_chosen - R_rejected)`
+- **Min/Mean/Max reward**: monitor reward distribution
+
+```python
+from trl import RewardTrainer, RewardConfig
+
+trainer = RewardTrainer(
+    model="meta-llama/Llama-3-8B",
+    args=RewardConfig(
+        max_length=512,
+        center_rewards_coefficient=0.01,
+    ),
+    train_dataset=preference_dataset,
+    processing_class=tokenizer,
+)
+trainer.train()
+# Sau đó dùng reward model trong GRPOTrainer:
+# reward_funcs = AutoModelForSequenceClassification.from_pretrained("./reward_model")
+```
+
+---
+
+## 10. Callbacks: Monitoring và Observability
+
+TRL cung cấp nhiều callbacks để monitor training (xem `callbacks.py`, 759 dòng).
+
+### 10.1. SyncRefModelCallback (EMA Sync)
+
+Dùng khi reference model cần track policy model qua EMA:
+
+$$\theta_{\text{ref}} \leftarrow (1-\alpha)\theta_{\text{ref}} + \alpha\theta_{\text{policy}}$$
+
+```python
+# callbacks.py, lines 102-140
+class SyncRefModelCallback(TrainerCallback):
+    def on_step_end(self, args, state, control, **kwargs):
+        if state.global_step % args.ref_model_sync_steps == 0:
+            self.sync_target_model(model, self.ref_model, args.ref_model_mixup_alpha)
+
+    @staticmethod
+    def _sync_target_model(model, target_model, alpha):
+        for target_param, copy_param in zip(target_model.parameters(), model.parameters()):
+            target_param.data.mul_(1.0 - alpha).add_(copy_param.data, alpha=alpha)
+```
+
+Hỗ trợ DeepSpeed ZeRO-3 (gathered parameters) và DDP/FSDP.
+
+### 10.2. LogCompletionsCallback
+
+Generate và log completions lên W&B/Comet tại eval time, giúp visualize chất lượng response qua training:
+
+```python
+from trl import LogCompletionsCallback
+
+trainer = GRPOTrainer(...)
+trainer.add_callback(LogCompletionsCallback(trainer=trainer, num_prompts=8))
+```
+
+### 10.3. RichProgressCallback
+
+Terminal progress display dùng Rich library, hiển thị metrics grouped theo category trong panels:
+
+```python
+from trl import RichProgressCallback
+trainer = GRPOTrainer(..., callbacks=[RichProgressCallback()])
+```
+
+### 10.4. BEMACallback (Bias-Corrected EMA)
+
+Kỹ thuật tiên tiến cho weight averaging:
+
+$$\theta'_t = \alpha_t(\theta_t - \theta_0) + \text{EMA}_t$$
+
+với $\alpha_t = (\rho + \gamma t)^{-\eta}$ và $\text{EMA}_t = (1-\beta_t)\text{EMA}_{t-1} + \beta_t\theta_t$.
+
+BEMA tốt hơn EMA thông thường cho long-horizon training vì nó bias-correct và decay schedule adaptive.
+
+```python
+from trl import BEMACallback
+trainer = GRPOTrainer(..., callbacks=[BEMACallback(update_freq=400, ema_power=0.5)])
+```
+
+### 10.5. Khi nào dùng callback nào?
+
+| Callback | Use case |
+|:---|:---|
+| SyncRefModelCallback | Reference model cần track policy (DPO, PPO) |
+| LogCompletionsCallback | Monitor response quality trong training |
+| RichProgressCallback | Better terminal UX |
+| BEMACallback | Long training runs, research experiments |
+
+---
+
+## Xem thêm
+
+- [Case Study: DeepSeek-R1 GRPO](./case_studies/case_1_deepseek_r1_grpo.md): Cách DeepSeek-R1 kết hợp accuracy_reward + format_reward
+
 Bài tiếp theo phân tích vLLM integration và generation optimization.

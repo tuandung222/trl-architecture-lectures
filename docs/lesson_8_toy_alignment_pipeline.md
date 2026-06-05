@@ -194,31 +194,118 @@ def compute_grpo_advantages(rewards: torch.Tensor, num_generations: int) -> torc
 ### 2.3. Full GRPO training step
 
 ```python
-def grpo_training_step(model, ref_model, tokenizer, prompts, num_generations=4):
-    """Một step GRPO hoàn chỉnh."""
+def get_per_token_logps(model, input_ids, attention_mask):
+    """Tính per-token log probabilities (không mask completion).
     
-    # Step 1: Generate G completions per prompt
+    Returns:
+        per_token_logps: [B, T-1] log probs tại mỗi position
+    """
+    outputs = model(input_ids=input_ids, attention_mask=attention_mask)
+    logits = outputs.logits[:, :-1, :]  # Shift right
+    labels = input_ids[:, 1:]            # Shift left
+    
+    log_z = torch.logsumexp(logits, dim=-1)
+    selected = torch.gather(logits, -1, labels.unsqueeze(-1)).squeeze(-1)
+    per_token_logps = selected - log_z
+    return per_token_logps  # [B, T-1]
+
+
+def grpo_training_step(model, ref_model, tokenizer, prompts, 
+                       optimizer, num_generations=4):
+    """Một step GRPO hoàn chỉnh (generation + reward + advantage + loss)."""
+    
+    # ---- Step 1: Generate G completions per prompt ----
     all_completions = []
+    completion_texts = []
     for prompt in prompts:
         for _ in range(num_generations):
             inputs = tokenizer(prompt, return_tensors="pt")
             with torch.no_grad():
                 output = model.generate(**inputs, max_new_tokens=50, do_sample=True)
             completion = tokenizer.decode(output[0, inputs["input_ids"].shape[1]:])
-            all_completions.append(completion)
+            all_completions.append((prompt, completion))
+            completion_texts.append(prompt + completion)
     
-    # Step 2: Compute rewards (dummy: length-based)
-    rewards = torch.tensor([min(len(c), 100) / 100.0 for c in all_completions])
+    # ---- Step 2: Compute rewards (dummy: length-based) ----
+    rewards = torch.tensor([min(len(c), 100) / 100.0 for c in completion_texts])
     
-    # Step 3: Compute advantages
+    # ---- Step 3: Compute group-relative advantages ----
     advantages = compute_grpo_advantages(rewards, num_generations)
     
-    # Step 4: Tokenize and compute log probs
-    # ... (tương tự DPO, nhưng trên completions thay vì pairs)
+    # ---- Step 4: Tokenize và tính per-token log probs ----
+    # Build full sequences: prompt + completion
+    full_enc = tokenizer(completion_texts, padding=True, truncation=True, 
+                         return_tensors="pt")
+    input_ids = full_enc["input_ids"]        # [B*G, T]
+    attention_mask = full_enc["attention_mask"]  # [B*G, T]
     
-    # Step 5: Compute GRPO loss và backward
-    # ... (sử dụng grpo_loss function ở trên)
+    # Build completion_mask: 1 tại completion tokens, 0 tại prompt
+    prompt_lens = [len(tokenizer(p, add_special_tokens=False)["input_ids"]) 
+                   for p, _ in all_completions]
+    seq_len = input_ids.shape[1]
+    completion_mask = torch.zeros_like(input_ids, dtype=torch.float)
+    for i, plen in enumerate(prompt_lens):
+        completion_mask[i, plen:] = attention_mask[i, plen:].float()
+    
+    # Policy model: per-token log probs
+    per_token_logps = get_per_token_logps(model, input_ids, attention_mask)
+    # completion_mask[:, 1:] aligns with per_token_logps (shifted by 1)
+    
+    # Old policy log probs (detach để stop gradient, như importance sampling baseline)
+    with torch.no_grad():
+        old_per_token_logps = get_per_token_logps(model, input_ids, attention_mask).detach()
+    
+    # Reference model: per-token log probs
+    with torch.no_grad():
+        ref_per_token_logps = get_per_token_logps(ref_model, input_ids, attention_mask)
+    
+    # ---- Step 5: Compute GRPO loss và backward ----
+    loss = grpo_loss(
+        per_token_logps=per_token_logps,
+        old_per_token_logps=old_per_token_logps,
+        ref_per_token_logps=ref_per_token_logps,
+        advantages=advantages,
+        completion_mask=completion_mask[:, 1:],  # Align với shifted logits
+    )
+    
+    loss.backward()
+    optimizer.step()
+    optimizer.zero_grad()
+    
+    return loss.item()
+
+
+# ---- Full training loop ----
+optimizer = torch.optim.AdamW(model.parameters(), lr=5e-5)
+prompts = ["Question: What is 2+2? Answer:", "Question: Capital of France? Answer:"]
+
+for epoch in range(3):
+    total_loss = grpo_training_step(
+        model, ref_model, tokenizer, prompts, 
+        optimizer, num_generations=4
+    )
+    print(f"Epoch {epoch}: GRPO loss = {total_loss:.4f}")
 ```
+
+> **Lưu ý**: Code trên chạy được trực tiếp với `gpt2` và vài prompts. Trong thực tế, bạn cần reward function thực sự (ví dụ `math_verify` cho toán học) thay vì dummy length-based reward.
+
+### 2.4. RLOO Variant (Preview)
+
+Trong [Bài 4b: RLOO Trainer](./lesson_4b_rloo_trainer.md), thay vì dùng group mean làm baseline, RLOO dùng **leave-one-out**:
+
+```python
+def compute_rloo_advantages(rewards: torch.Tensor, num_generations: int) -> torch.Tensor:
+    """RLOO: baseline_i = mean(all rewards EXCEPT reward_i)."""
+    B = rewards.shape[0] // num_generations
+    grouped = rewards.reshape(B, num_generations)
+    
+    group_sum = grouped.sum(dim=1, keepdim=True)   # [B, 1]
+    baselines = (group_sum - grouped) / (num_generations - 1)
+    advantages = grouped - baselines               # leave-one-out
+    return advantages.flatten()
+```
+
+RLOO có **lower variance** hơn GRPO group mean nhưng mất nhiều computation hơn một chút (chia cho G-1 thay vì G).
 
 ---
 
@@ -247,3 +334,10 @@ def grpo_training_step(model, ref_model, tokenizer, prompts, num_generations=4):
 6. **Thêm distributed**: Wrap bằng Accelerate cho multi-GPU
 
 Hoàn thành tất cả 6 bài tập trên, bạn sẽ có một phiên bản TRL GRPOTrainer thu nhỏ của riêng mình.
+
+---
+
+## Xem thêm
+
+- [Lý thuyết 2: GRPO Mathematics](./theory_deep_dive/theory_2_grpo_math.md): Công thức toán học cho GRPO loss
+- [Lý thuyết 3: DPO Mathematics](./theory_deep_dive/theory_3_dpo_math.md): Derivation DPO loss từ RL objective
